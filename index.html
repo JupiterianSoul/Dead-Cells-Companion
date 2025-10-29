@@ -3,44 +3,65 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Dead Cells Companion</title>
+  <title>Dead Cells Companion App</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header>
-    <h1>Dead Cells Companion</h1>
-    <nav>
-      <button id="random-btn">🎲 Random Item</button>
-      <button id="compare-btn">🔍 Compare</button>
-      <button id="export-btn">⬇ Export</button>
-      <button id="filter-toggle-btn">🔽 Filters</button>
-      <button id="show-favs-btn">★ Favorites</button>
-      <button id="unlock-btn">⛏ Unlock Tracker</button>
-      <label>
-        Import items.json
-        <input type="file" id="file-input" style="display:none" accept=".json">
-      </label>
-    </nav>
-    <div id="filters" class="filters">
-      <input type="text" id="search-input" placeholder="Search name or description" autocomplete="off">
-      <select id="type-filter"><option value="">All Types</option></select>
-      <input type="text" id="stat-filter" placeholder="Filter by stat (e.g. DPS)">
-      <button id="apply-filter">Apply</button>
+    <div class="main-header">
+      <img src="logo.png" alt="Dead Cells Logo" height="64" />
+      <h1>Dead Cells Companion</h1>
+      <nav class="main-nav">
+        <a href="#items" id="tab-items">All Items</a>
+        <a href="#weapons" id="tab-weapons">Weapons</a>
+        <a href="#shields" id="tab-shields">Shields</a>
+        <a href="#grenades" id="tab-grenades">Grenades</a>
+        <a href="#traps" id="tab-traps">Traps</a>
+        <a href="#powers" id="tab-powers">Powers</a>
+        <button id="open-unlocks">Unlock Tracker</button>
+        <button id="open-favs">Favorites</button>
+        <button id="open-compare">Compare</button>
+        <button id="open-settings">Settings</button>
+      </nav>
     </div>
+    <section class="search-section">
+      <input type="text" id="search-input" placeholder="Search items, keywords, stats..." autocomplete="off" />
+      <select id="type-filter"></select>
+      <select id="rarity-filter"></select>
+      <select id="sort-filter">
+        <option value="name">Sort by Name</option>
+        <option value="type">Sort by Type</option>
+        <option value="dps">Sort by DPS</option>
+        <option value="rarity">Sort by Rarity</option>
+      </select>
+      <button id="apply-filter">Filter/Search</button>
+      <button id="random-item-btn">Random Item</button>
+      <button id="export-btn">Export</button>
+      <input type="file" id="import-json" accept=".json" />
+    </section>
+    <section class="progress-area" id="progress-area">
+      <!-- Show overall unlock/favorite/progress stats here -->
+    </section>
   </header>
-  <main>
-    <div id="item-list"></div>
-    <div id="pagination"></div>
-    <section id="detail-modal" class="modal"></section>
-    <section id="compare-modal" class="modal"></section>
-    <section id="unlock-modal" class="modal"></section>
+  <main id="main-content">
+    <div id="tab-content-items" class="tab-content"></div>
+    <div id="tab-content-weapons" class="tab-content"></div>
+    <div id="tab-content-shields" class="tab-content"></div>
+    <div id="tab-content-grenades" class="tab-content"></div>
+    <div id="tab-content-traps" class="tab-content"></div>
+    <div id="tab-content-powers" class="tab-content"></div>
   </main>
+  <section id="item-modal" class="modal"></section>
+  <section id="compare-modal" class="modal"></section>
+  <section id="unlock-modal" class="modal"></section>
+  <section id="settings-modal" class="modal"></section>
   <footer>
     <p>
-      Dead Cells © Motion Twin.<br>
-      Built as an open source fan companion.
+      Dead Cells © Motion Twin <br>
+      Companion App © 2025 by You. Powered by Fandom/Wiki and open-source tools.
     </p>
   </footer>
   <script src="app.js"></script>
 </body>
 </html>
+

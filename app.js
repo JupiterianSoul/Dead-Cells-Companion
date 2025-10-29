@@ -1,245 +1,332 @@
-// ========== CONFIG ========== //
-const ITEMS_JSON_URL = "items.json"; // adjust if you use a subfolder
+// Dead Cells Companion App JS
+// Author: You!
+// Modular, robust, scalable—add new features easily!
 
-// ========== STATE ========== //
-let items = [], filtered = [], favorites = [], unlocked = [], notes = {};
-let typeList = [];
-let cmpSel = [];
-let page = 1, perPage = 20;
+// ========== GLOBAL STATE ==========
+let allItems = [], itemsByType = {}, filterMap = {}, currentTab = 'items', currentCompare = [];
+let favorites = []; let unlocks = []; let notes = {};
+const maxCompare = 3;
 
-// ========== LOAD INIT ========== //
+// ========== INIT ==========
 
 document.addEventListener("DOMContentLoaded", async () => {
+  // Load persistent state
   loadLocal();
   await loadItems();
-  buildTypeFilter();
-  applyFilter();
-  setUpEvents();
+  buildTypeTabs();
+  setupEvents();
+  activateTab('items');
+  renderProgress();
 });
 
-// -------- DATA LOAD -------- //
-async function loadItems(f = null) {
+// ========== DATA LOAD/SPLIT ==========
+async function loadItems(src = "items.json") {
   try {
-    let data;
-    if (f) {
-      data = await f.text();
-    } else {
-      data = await fetch(ITEMS_JSON_URL).then(r => r.json());
-    }
-    items = Array.isArray(data) ? data : Object.values(data);
-    typeList = [...new Set(items.map(it => it.type).filter(Boolean))];
-    return true;
-  } catch (e) {
+    let raw = await fetch(src).then(r => r.json());
+    allItems = Array.isArray(raw) ? raw : Object.values(raw);
+    splitByType();
+  } catch(e) {
     alert("Error loading items: " + e);
-    items = [];
-    return false;
+    allItems = [];
   }
 }
 
-// -------- FILTER, SEARCH -------- //
-function buildTypeFilter() {
-  const sel = document.getElementById("type-filter");
-  sel.innerHTML = `<option value="">All Types</option>` +
-    typeList.map(t => `<option value="${t}">${t}</option>`).join("");
-}
-function applyFilter() {
-  const q = document.getElementById("search-input").value.trim().toLowerCase();
-  const tflt = document.getElementById("type-filter").value;
-  const sflt = document.getElementById("stat-filter").value.trim().toLowerCase();
-
-  filtered = items.filter(item => {
-    if (tflt && item.type !== tflt) return false;
-    if (q && ![item.name, item.long_description, item.infobox?.combo, item.infobox?.flavor_text].join(" ").toLowerCase().includes(q)) return false;
-    if (sflt && !(JSON.stringify(item.infobox||{}).toLowerCase().includes(sflt))) return false;
-    return true;
-  });
-  page = 1;
-  renderItemList();
+function splitByType() {
+  const typeMap = {};
+  for (let it of allItems) {
+    let typ = it.type || "Other";
+    if (!typeMap[typ]) typeMap[typ] = [];
+    typeMap[typ].push(it);
+  }
+  itemsByType = typeMap;
+  // Populate filter options
+  filterMap.types = Object.keys(typeMap).sort();
+  filterMap.rarities = ["Common", "Rare", "Legendary", "Boss"];
 }
 
-// --------- RENDER MAIN VIEW --------- //
-function renderItemList() {
-  const list = document.getElementById("item-list");
-  if (!filtered.length) { list.innerHTML = `<div>No items match your query.</div>`; }
-  let paged = filtered.slice((page-1)*perPage, page*perPage);
-  list.innerHTML = paged.map(renderItemCard).join("");
-  renderPagination();
+// ========== UI BUILD ==========
+function buildTypeTabs() {
+  for(let t of filterMap.types) {
+    const tabId = `tab-content-${t.toLowerCase().replace(/\\s/g, '')}`;
+    let tabBtn = document.getElementById(`tab-${t.toLowerCase()}`);
+    if(tabBtn) tabBtn.onclick = () => activateTab(t);
+  }
+  populateSelect("type-filter", filterMap.types, "All Types");
+  populateSelect("rarity-filter", filterMap.rarities, "All Rarities");
+}
+
+function populateSelect(id, opts, defaultLabel) {
+  const sel = document.getElementById(id);
+  sel.innerHTML = `<option value="">${defaultLabel}</option>` +
+    opts.map(t => `<option value="${t}">${t}</option>`).join("");
+}
+
+// ========== TAB AND NAV ==========
+
+function activateTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tab-content').forEach(tc => tc.style.display='none');
+  let tabId = `tab-content-${tab.toLowerCase().replace(/\\s/g,'')}`;
+  const el = document.getElementById(tabId);
+  if(el)  { el.style.display='block'; renderTabContent(tab, el); }
+  else if(tab === 'items') {
+    document.getElementById('tab-content-items').style.display='block';
+    renderTabContent('items', document.getElementById('tab-content-items'));
+  }
+  highlightTab(tab);
+}
+
+function highlightTab(tab) {
+  document.querySelectorAll('.main-nav a').forEach(a => a.classList.remove('active'));
+  let tabBtn = document.getElementById(`tab-${tab.toLowerCase()}`);
+  if(tabBtn) tabBtn.classList.add('active');
+}
+
+// ========== LIST/CARD RENDER ==========
+function renderTabContent(tab, parent) {
+  let arr = tab === 'items' ? allItems : itemsByType[tab] || [];
+  let flt = applyCurrentFilter(arr);
+  parent.innerHTML = flt.map(renderItemCard).join('');
 }
 
 function renderItemCard(item) {
   return `
-  <div class="item-card">
-    <div class="item-header">
-      <img class="item-img" src="${guessIcon(item)}" alt="${item.name}" loading="lazy">
-      <h2>${item.name}</h2>
-      <span class="item-type">${item.type||""}</span>
+    <div class="item-card">
+      <div class="item-header">
+        <img class="item-img" src="${getIconFor(item)}" alt="${item.name}">
+        <h2>${item.name}</h2>
+        <span class="item-type">${item.type}</span>
+        ${isFavorite(item.name) ? '<span class="favstar">★</span>' : ''}
+        ${isUnlocked(item.name) ? '<span class="unlockstar">⛏</span>' : ''}
+      </div>
+      <div class="item-desc">${getCleanDesc(item.long_description)}</div>
+      <div class="item-actions">
+        <button onclick="showItemModal('${item.name}')">Details</button>
+        <button onclick="toggleFavorite('${item.name}')">${isFavorite(item.name) ? 'Unfavorite' : 'Favorite'}</button>
+        <button onclick="toggleCompare('${item.name}')">${isCompared(item.name) ? 'Remove Compare' : 'Compare'}</button>
+        <button onclick="toggleUnlock('${item.name}')">${isUnlocked(item.name) ? 'Lock' : 'Unlock'}</button>
+      </div>
+      <div class="notes-area">
+        <textarea class="notes-box" onchange="saveNote('${item.name}',this.value)" placeholder="Your notes...">${getNote(item.name)}</textarea>
+      </div>
     </div>
-    <div>${item.long_description||""}</div>
-    <div class="item-actions">
-      <button onclick="showDetail('${item.name}')">Details</button>
-      <button onclick="toggleFav('${item.name}')" class="fav-btn${favorites.includes(item.name)?' active':''}">★</button>
-      <button onclick="addCompare('${item.name}')">Compare</button>
-      <button onclick="setUnlock('${item.name}')">${unlocked.includes(item.name)?'⛏':'🔓'}</button>
-    </div>
-    <textarea class="notes-box" onchange="saveNote('${item.name}',this.value)" placeholder="Your notes...">${notes[item.name]||""}</textarea>
-  </div>
   `;
 }
-function renderPagination() {
-  let pagDiv = document.getElementById("pagination");
-  let numPages = Math.ceil(filtered.length/perPage);
-  if (numPages <= 1) { pagDiv.innerHTML = ""; return; }
-  let str = "";
-  for (let i=1;i<=numPages;i++) {
-    str += `<button class="pagination-btn${i===page?' active':''}" onclick="gotoPage(${i})">${i}</button>`;
-  }
-  pagDiv.innerHTML = str;
-}
-function gotoPage(n) { page = n; renderItemList(); }
 
-// --------- ITEM DETAIL MODAL --------- //
-window.showDetail = function(name) {
-  const item = items.find(i=>i.name===name);
+// ========== ITEM MODAL & INFOSTATS ==========
+window.showItemModal = function(name) {
+  const item = allItems.find(i => i.name === name);
   if (!item) return;
-  let html = `
-  <div class="modal-content">
-    <button class="close-btn" onclick="closeModal('detail-modal')">×</button>
-    <h2>${item.name}</h2>
-    <img class="icon-large" src="${guessIcon(item)}" alt="${item.name}">
-    <div>
-      <span class="item-type">${item.type||""}</span>
-      ${favorites.includes(item.name)?'<span>★ Favorite</span>':''}
-      ${unlocked.includes(item.name)?'<span>⛏ Unlocked</span>':''}
+  let html = `<div class="modal-content">
+    <button class="close-btn" onclick="closeModal('item-modal')">×</button>
+    <div class="modal-header">
+      <img src="${getIconFor(item)}" class="icon-large">
+      <h2>${item.name}</h2>
+      <span class="item-type">${item.type}</span>
+      ${isFavorite(item.name)?'<span class="favstar">★ Favorite</span>':''}
+      ${isUnlocked(item.name)?'<span class="unlockstar">⛏ Unlocked</span>':''}
     </div>
-    <ul>
-      ${Object.entries(item.infobox||{}).map(([k,v])=>`<li><b>${k}:</b> ${v}</li>`).join("")}
-    </ul>
-    <div><b>Description:</b> ${item.long_description||""}</div>
-    <div><b>Flavor:</b> ${item.infobox?.flavor_text||""}</div>
-    <div><b>Unlock:</b> ${item.infobox?.blueprintlocation||""} Cost: ${item.infobox?.blueprintcost||""}</div>
-    <div><b>Critical Effects:</b> ${item.infobox?.critical_hit||""}</div>
-    <label>Your notes:
-      <textarea class="notes-box" onchange="saveNote('${item.name}',this.value)">${notes[item.name]||""}</textarea>
-    </label>
-  </div>
-  `;
-  showModal("detail-modal", html);
+    <div class="modal-section">
+      <div class="item-stats">${renderInfobox(item.infobox)}</div>
+      <div class="item-desc">${getCleanDesc(item.long_description)}</div>
+      <div class="modal-link"><a href="${item.url}" target="_blank">Wiki</a></div>
+    </div>
+    <div>
+      <h3>Your Notes</h3>
+      <textarea style="width:98%;min-height:32px;" onchange="saveNote('${item.name}',this.value)">${getNote(item.name)}</textarea>
+    </div>
+  </div>`;
+  showModal("item-modal", html);
 };
+
+function renderInfobox(infobox) {
+  let html = '<table class="infobox">';
+  for (let [k, v] of Object.entries(infobox)) {
+    if (!v || /^internal name/i.test(k)) continue;
+    let label = k.replace(/_/g," ").replace(/\b\w/g,l=>l.toUpperCase());
+    html += `<tr><td class="infokey">${label}</td><td>${v}</td></tr>`;
+  }
+  html += '</table>';
+  return html;
+}
+
+function getCleanDesc(desc) {
+  // Try to show only core readable description
+  if (!desc) return '';
+  let s = desc.split('Internal Name')[0].trim();
+  return s.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/([0-9])([A-Z])/g, '$1 $2').replace(/Type[A-Za-z ]*/g,'');
+}
+
+function getIconFor(item) {
+  return (item.infobox && item.infobox.icon) ? item.infobox.icon :
+    `icons/${item.name.replace(/[\s:'-]/g, '_')}.png`;
+}
+
+// ========== SEARCH/FILTER/SORT ==========
+
+function applyCurrentFilter(arr) {
+  const query = document.getElementById("search-input").value.toLowerCase();
+  const tflt = document.getElementById("type-filter").value;
+  const rflt = document.getElementById("rarity-filter").value;
+  const sort = document.getElementById("sort-filter").value;
+  let res = arr.filter(item => {
+    if (tflt && item.type !== tflt) return false;
+    if (rflt && (item.infobox.rarity||'Common') !== rflt) return false;
+    if (query && ![item.name, item.long_description, ...Object.values(item.infobox)].join(" ").toLowerCase().includes(query)) return false;
+    return true;
+  });
+  res = sortItems(res, sort);
+  return res;
+}
+
+function sortItems(arr, key) {
+  let keyMap = { name: "name", type: "type", dps: "Base Dps", rarity: "rarity"};
+  let k = keyMap[key] || key;
+  return arr.slice().sort((a,b) => (a[k]||"").localeCompare(b[k]||""));
+}
+
+// ========== EVENTS ==========
+function setupEvents() {
+  // Tab nav: detect click
+  document.querySelectorAll('.main-nav a').forEach(a => {
+    a.onclick = () => activateTab(a.textContent.trim());
+  });
+  document.getElementById("apply-filter").onclick = () => activateTab(currentTab);
+  document.getElementById("search-input").onkeyup = e => { if (e.key==='Enter') activateTab(currentTab); };
+  document.getElementById("random-item-btn").onclick = () => showItemModal(pickRandom());
+  document.getElementById("export-btn").onclick = () => exportFiltered();
+  document.getElementById("import-json").onchange = evt => { if (evt.target.files[0]) { importJsonFile(evt.target.files[0]); }};
+  document.getElementById("open-favs").onclick = renderFavorites;
+  document.getElementById("open-unlocks").onclick = renderUnlockModal;
+  document.getElementById("open-compare").onclick = renderCompareModal;
+  document.getElementById("open-settings").onclick = renderSettingsModal;
+}
+
+// ========== COMPARE ==========
+window.toggleCompare = function(name) {
+  if (isCompared(name)) currentCompare = currentCompare.filter(n=>n!==name);
+  else if(currentCompare.length < maxCompare) currentCompare.push(name);
+  renderCompareModal();
+}
+function renderCompareModal() {
+  let html = '<div class="modal-content"><button class="close-btn" onclick="closeModal(\'compare-modal\')">×</button><h2>Compare Items</h2><div class="compare-list">';
+  for(let n of currentCompare) {
+    const item = allItems.find(i=>i.name===n); if(!item)continue;
+    html += `<div class="compare-card"><img src="${getIconFor(item)}" class="icon-large"><h4>${item.name}</h4>${renderInfobox(item.infobox)}<p>${getCleanDesc(item.long_description)}</p>
+      <button onclick="toggleCompare('${item.name}')">Remove</button></div>`;
+  }
+  html += `</div></div>`;
+  showModal("compare-modal", html);
+}
+function isCompared(name) { return currentCompare.includes(name); }
+
+// ========== FAVORITES/UNLOCKS/NOTES ==========
+
+window.toggleFavorite = function(name) {
+  if(isFavorite(name)) favorites = favorites.filter(n=>n!==name);
+  else favorites.push(name);
+  saveLocal(); activateTab(currentTab);
+}
+function isFavorite(name) { return favorites.includes(name); }
+function renderFavorites() {
+  let favs = allItems.filter(i => isFavorite(i.name));
+  let html = '<div class="modal-content"><button class="close-btn" onclick="closeModal(\'item-modal\')">×</button><h2>Your Favorite Items</h2>' +
+    favs.map(renderItemCard).join('');
+  showModal("item-modal", html);
+}
+
+window.toggleUnlock = function(name) {
+  if(isUnlocked(name)) unlocks = unlocks.filter(n=>n!==name);
+  else unlocks.push(name);
+  saveLocal(); activateTab(currentTab);
+}
+function isUnlocked(name) { return unlocks.includes(name); }
+function renderUnlockModal() {
+  let unl = allItems.filter(i => isUnlocked(i.name));
+  let html = '<div class="modal-content"><button class="close-btn" onclick="closeModal(\'unlock-modal\')">×</button><h2>Unlocked Items</h2>' +
+    unl.map(renderItemCard).join('');
+  showModal("unlock-modal", html);
+}
+
+function saveNote(name, val) {
+  notes[name] = val;
+  saveLocal();
+}
+function getNote(name) { return notes[name] || ""; }
+
+// ========== MODAL CONTROL ==========
 function showModal(mid, html) {
   let m = document.getElementById(mid);
   m.innerHTML = html;
   m.classList.add("active");
 }
-window.closeModal = function(mid) { document.getElementById(mid).classList.remove("active"); };
+window.closeModal = function(mid) { document.getElementById(mid).classList.remove("active"); }
 
-// --------- COMPARE ITEMS --------- //
-window.addCompare = function(name) {
-  if (!cmpSel.includes(name)) cmpSel.push(name);
-  renderCompareModal();
+// ========== SETTINGS ==========
+function renderSettingsModal() {
+  let html = `<div class="modal-content"><button class="close-btn" onclick="closeModal('settings-modal')">×</button><h2>Settings</h2>
+    <label>Theme: <select id="theme-select"><option value="dark">Dark</option><option value="light">Light</option></select></label>
+    <label>Cards Per Page: <input type="number" id="cards-per-page" value="20" min="5" max="100"></label>
+    <button onclick="exportFiltered()">Export Current List</button>
+    <button onclick="clearLocal()">Clear Favorites/Unlocks/Notes</button>
+  </div>`;
+  showModal("settings-modal", html);
+  document.getElementById("cards-per-page").onchange = e => { /* handle cards per page change */ };
 }
-function renderCompareModal() {
-  let html = `<div class="modal-content"><button class="close-btn" onclick="closeModal('compare-modal')">×</button><h2>Compare Items</h2><div style="display:flex;gap:18px;justify-content:center;">`;
-  for (let n of cmpSel) {
-    let item = items.find(i=>i.name===n);
-    if (!item) continue;
-    html += `<div><img src="${guessIcon(item)}" style="width:66px"/><h4>${item.name}</h4><ul>${
-      Object.entries(item.infobox||{}).map(([k,v])=>`<li><b>${k}:</b> ${v}</li>`).join("")
-    }</ul><div>${item.long_description||""}</div>
-    <button onclick="removeCompare('${item.name}')">Remove</button></div>`;
-  }
-  html += `</div></div>`;
-  showModal("compare-modal", html);
+function clearLocal() {
+  favorites = []; unlocks = []; notes = {};
+  saveLocal(); activateTab(currentTab);
 }
-window.removeCompare = function(name) {
-  cmpSel = cmpSel.filter(n=>n!==name);
-  renderCompareModal();
-};
 
-// --------- FAVORITES --------- //
-window.toggleFav = function(name) {
-  if (favorites.includes(name)) favorites = favorites.filter(n=>n!==name);
-  else favorites.push(name);
-  saveLocal(); renderItemList();
-}
-document.getElementById("show-favs-btn").onclick = function() {
-  filtered = items.filter(i=>favorites.includes(i.name));
-  page = 1;
-  renderItemList();
-};
-
-// --------- UNLOCK TRACKER --------- //
-window.setUnlock = function(name) {
-  if (unlocked.includes(name)) unlocked = unlocked.filter(n=>n!==name);
-  else unlocked.push(name);
-  saveLocal(); renderItemList();
-}
-document.getElementById("unlock-btn").onclick = function() {
-  let html = `<div class="modal-content"><button class="close-btn" onclick="closeModal('unlock-modal')">×</button>
-  <h2>Unlock Tracker</h2><ul>`;
-  for (let n of unlocked) html += `<li>${n}</li>`;
-  html += "</ul></div>";
-  showModal("unlock-modal", html);
-};
-
-// --------- RANDOM ITEM --------- //
-document.getElementById("random-btn").onclick = function() {
-  const idx = Math.floor(Math.random() * items.length);
-  showDetail(items[idx].name);
-};
-
-// --------- EXPORT --------- //
-document.getElementById("export-btn").onclick = function() {
-  const str = JSON.stringify(filtered, null, 2);
+// ========== EXPORT/IMPORT ==========
+function exportFiltered() {
+  let arr = applyCurrentFilter(allItems);
+  let str = JSON.stringify(arr, null, 2);
   saveAsFile('filtered_items.json', str, "application/json");
-};
+}
 function saveAsFile(name, text, type) {
   const blob = new Blob([text], { type });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = name;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
 }
-
-// --------- NOTES (LocalStorage) --------- //
-window.saveNote = function(name, val) {
-  notes[name] = val;
-  saveLocal();
+function importJsonFile(file) {
+  let reader = new FileReader();
+  reader.onload = function(e) {
+    try { allItems = JSON.parse(e.target.result); splitByType(); activateTab(currentTab); }
+    catch(err) { alert('Failed to parse JSON'); }
+  };
+  reader.readAsText(file);
 }
-// --------- PERSISTENCE --------- //
+
+// ========== PROGRESS ==========
+function renderProgress() {
+  let total = allItems.length;
+  let favCount = favorites.length;
+  let unlockCount = unlocks.length;
+  let html = `<div>
+    <strong>Progress:</strong> <span>${unlockCount}/${total} Unlocked</span> | <span>${favCount} Favorites</span>
+    <progress value="${unlockCount}" max="${total}"></progress>
+  </div>`;
+  document.getElementById('progress-area').innerHTML = html;
+}
+
+// ========== LOCAL STORAGE ==========
 function saveLocal() {
   localStorage.setItem("dc_favs", JSON.stringify(favorites));
-  localStorage.setItem("dc_unlocks", JSON.stringify(unlocked));
+  localStorage.setItem("dc_unlocks", JSON.stringify(unlocks));
   localStorage.setItem("dc_notes", JSON.stringify(notes));
 }
 function loadLocal() {
   favorites = JSON.parse(localStorage.getItem("dc_favs")||"[]");
-  unlocked = JSON.parse(localStorage.getItem("dc_unlocks")||"[]");
+  unlocks = JSON.parse(localStorage.getItem("dc_unlocks")||"[]");
   notes = JSON.parse(localStorage.getItem("dc_notes")||"{}");
 }
 
-// --------- FILE IMPORT --------- //
-document.getElementById("file-input").onchange = async function(e) {
-  if (e.target.files[0]) {
-    await loadItems(e.target.files[0]);
-    buildTypeFilter();
-    applyFilter();
-  }
-};
-
-// --------- UI WIREUP --------- //
-function setUpEvents() {
-  document.getElementById("apply-filter").onclick = applyFilter;
-  document.getElementById("search-input").onkeyup = e => { if (e.key === "Enter") applyFilter(); }
-  document.getElementById("stat-filter").onkeyup = e => { if (e.key === "Enter") applyFilter(); }
-  document.getElementById("type-filter").onchange = applyFilter;
-  document.getElementById("compare-btn").onclick = renderCompareModal;
-  document.getElementById("filter-toggle-btn").onclick = function(){
-    document.getElementById("filters").classList.toggle("active");
-  };
+// ========== UTILS ==========
+function pickRandom() {
+  if(!allItems.length) return "";
+  let idx = Math.floor(Math.random() * allItems.length);
+  return allItems[idx].name;
 }
 
-// --------- ICON HINT --------- //
-function guessIcon(item) {
-  // Prefer static/icons/[name].png or item.infobox.icon, fallback to placeholder
-  if (item.infobox?.icon) return item.infobox.icon;
-  return "icons/" + item.name.replace(/[\s:'-]/g, '_') + ".png";
-}
